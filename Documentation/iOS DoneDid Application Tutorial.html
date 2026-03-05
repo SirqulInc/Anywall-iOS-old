@@ -1,0 +1,580 @@
+<h1>iOS DoneDid Application Tutorial
+<br>Migrating From Parse to Sirqul</br></h1>
+<br><h2>Introduction</h2></br>
+<p>To help give an example of migrating an app that's utilizing Parse to instead use Sirqul, we've edited the <a href="https://github.com/ParsePlatform/AnyWall/tree/master/AnyWall-android">AnyWall</a> tutorial application to instead use Sirqul. This tutorial is broken up into different sections, the first of which will only mirror the same functionality. In subsequent parts, we'll take the AnyWall application beyond was it was capable of, out-of-the-box, in order to showcase additional functionality of Sirqul that's already built-in to the service. After each section, the complete project code will be available for download so you can view the progress and follow along with this tutorial.</p>
+<p><h2>Part 1: Replacing Parse with Sirqul</h2></p>
+<p><h3>Preparation:</h3></p>
+<p>First thing you must do is to remove the Parse SDK, and replace it with the Sirqul SDK. Please refer to <a href="http://dev.sirqul.com/docs/start">integrating the SDK into an existing project</a>.</p>
+<p><h3>Identifying AnyWall Parse Utilization</h3></p>
+<p>There are a few key places where Parse is utilized:</p>
+<ol>
+	<li>Parse SDK is instantiated via the <i>DDAppDelegate</i> class.
+	<li>Used for account log in via the <i>DDLoginViewController</i> class.
+	<li>Used for account sign up via the <i>DDNewUserViewController</i> class.
+	<li>Used for account log out via the <i>DDSettingsViewController</i> class.
+	<li>Used for retrieving the comments on the map via the <i>DDWallPostsTableViewController</i> class.
+	<li>Used for posting a comment on the map via the <i>DDWallPostViewController</i> class.
+	<li>Used for sending an analytic via the <i>DDAppDelegate</i> class.
+</ol>
+<p><h3>1. Instantiating Sirqul via the Application class:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	[Parse setApplicationId:@"APPLICATION_ID" clientKey:@"CLIENT_KEY"];
+	</pre>
+</code>
+
+<p>With Sirqul, we will be handling this differently.  In the <i>DDConstants.h</i> file, add your Sirqul <i>appKey</i> and <i>privateKey</i> in the placeholder spots, as shown below: </p>
+<code>
+	<pre>
+	#define sirqulAppKey @"Your_Sirqul_App_Key"
+	#define sirqulPrivateKey @"Your_Sirqul_Private_Key"
+	</pre>
+</code>
+
+<p>Be sure to import this file in any classes that will be creating a <i>SirqulNetworkInterface</i> object.</p>
+
+<p><h3>2. Using Sirqul to log in an existing user:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	[PFUser logInWithUsernameInBackground:username password:password block:^(PFUser *user, NSError *error) {
+		// Tear down the activity view in all cases.
+		[activityView.activityIndicator stopAnimating];
+		[activityView removeFromSuperview];
+
+		if (user) {
+			PAWWallViewController *wallViewController = [[PAWWallViewController alloc] initWithNibName:nil bundle:nil];
+			[(UINavigationController *)self.presentingViewController pushViewController:wallViewController animated:NO];
+			[self.presentingViewController dismissModalViewControllerAnimated:YES];
+		} else {
+			// Didn't get a user.
+			NSLog(@"%s didn't get a user!", __PRETTY_FUNCTION__);
+
+			// Re-enable the done button if we're tossing them back into the form.
+			doneButton.enabled = [self shouldEnableDoneButton];
+			UIAlertView *alertView = nil;
+
+			if (error == nil) {
+				// the username or password is probably wrong.
+				alertView = [[UIAlertView alloc] initWithTitle:@"Couldn't log in:\nThe username or password were wrong." message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			} else {
+				// Something else went horribly wrong:
+				alertView = [[UIAlertView alloc] initWithTitle:[[error userInfo] objectForKey:@"error"] message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			}
+			[alertView show];
+			// Bring the keyboard back up, because they'll probably need to change something.
+			[usernameField becomeFirstResponder];
+		}
+	}];
+	</pre>
+</code>
+<p>To log an existing user into the Sirqul platform, we will utilize the <i>loginWithUsername:andPassword:andLocation:andReturnProfile:andResponseFilters:</i> method:</p>
+<code>
+	<pre>
+	//Sirqul Implementation - Create an instance of SirqulNetworkInterface and use the login method.
+	//Reponse will appear in the callback methods below.
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+	[interface setStatus:kSirqulStatusLogin];
+	[interface loginWithUsername:username andPassword:password andLocation:nil andReturnProfile:nil andResponseFilters:nil];
+	</pre>
+</code>
+<p>The response will come back in the <i>SirqulNetworkInterfaceDelegate</i> callback methods, and we will work with the data that is returned:</p>
+<code>
+	<pre>
+	-(void)networkRequestDidSucceed:(NSDictionary *)jsonData withInterface:(SirqulNetworkInterface *)sni{
+		if ([SNIHelper checkIfValid:jsonData]) {
+			if (sni.status == kSirqulStatusLogin) {
+				if ([SNIHelper checkDictionary:jsonData objectForKey:@"account"]) {
+					NSDictionary *account = [jsonData objectForKey:@"account"];
+					if ([SNIHelper checkDictionary:account objectForKey:@"accountId"]) {
+						[[NSUserDefaults standardUserDefaults]setObject:[account objectForKey:@"accountId"] forKey:@"accountId"];
+					}
+				}
+				[[NSUserDefaults standardUserDefaults]setBool:YES forKey:@"loggedIn"];
+				[[NSUserDefaults standardUserDefaults]synchronize];
+			
+				[activityView.activityIndicator stopAnimating];
+				[activityView removeFromSuperview];
+				DDWallViewController *wallViewController = [[DDWallViewController alloc] initWithNibName:nil bundle:nil];
+				[(UINavigationController *)self.presentingViewController pushViewController:wallViewController animated:NO];
+				[self.presentingViewController dismissModalViewControllerAnimated:YES];
+			}
+		}else{
+			[activityView.activityIndicator stopAnimating];
+			[activityView removeFromSuperview];
+			// Re-enable the done button if we're tossing them back into the form.
+			doneButton.enabled = [self shouldEnableDoneButton];
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"Error" message:[jsonData objectForKey:@"message"] delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+			// Bring the keyboard back up, because they'll probably need to change something.
+			[usernameField becomeFirstResponder];
+		}
+	}
+
+	-(void)networkRequest:(SirqulNetworkInterface *)sni didFailWithError:(NSError *)error{
+		[activityView.activityIndicator stopAnimating];
+		[activityView removeFromSuperview];
+		// Didn't get a user.
+		NSLog(@"%s didn't get a user!", __PRETTY_FUNCTION__);
+	
+		// Re-enable the done button if we're tossing them back into the form.
+		doneButton.enabled = [self shouldEnableDoneButton];
+		UIAlertView *alertView = nil;
+	
+		if (error == nil) {
+			// the username or password is probably wrong.
+			alertView = [[UIAlertView alloc] initWithTitle:@"Couldn't log in:\nThe username or password were wrong." message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+		} else {
+			// Something else went horribly wrong:
+			alertView = [[UIAlertView alloc] initWithTitle:error.description message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+		}
+		[alertView show];
+		// Bring the keyboard back up, because they'll probably need to change something.
+		[usernameField becomeFirstResponder];
+	}
+	</pre>
+</code>
+
+<p><h3>3. Using Sirqul to sign up a new user:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	PFUser *user = [PFUser user];
+	user.username = username;
+	user.password = password;
+	[user signUpInBackgroundWithBlock:^(BOOL succeeded, NSError *error) {
+		if (error) {
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:[[error userInfo] objectForKey:@"error"] message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+			doneButton.enabled = [self shouldEnableDoneButton];
+			[activityView.activityIndicator stopAnimating];
+			[activityView removeFromSuperview];
+			// Bring the keyboard back up, because they'll probably need to change something.
+			[usernameField becomeFirstResponder];
+			return;
+		}
+
+		// Success!
+		[activityView.activityIndicator stopAnimating];
+		[activityView removeFromSuperview];
+
+		PAWWallViewController *wallViewController = [[PAWWallViewController alloc] initWithNibName:nil bundle:nil];
+		[(UINavigationController *)self.presentingViewController pushViewController:wallViewController animated:NO];
+		[self.presentingViewController dismissModalViewControllerAnimated:YES];
+	}];
+	</pre>
+</code>
+<p>To sign up a new user with the Sirqul platform, we will use the <i>quickSignUpWithName:andEmail:andPassword:</i> method.</p>
+
+<code>
+	<pre>
+	//Sirqul Implementation - Create an instance of SirqulNetworkInterface and use the quickSignUp method.
+	//Reponse will appear in the callback methods below.
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+	[interface setStatus:kSirqulStatusSignUp];
+	[interface quickSignUpWithName:username andEmail:username andPassword:password];
+	</pre>
+</code>
+<p>The response will come back in the <i>SirqulNetworkInterfaceDelegate</i> callback methods, and we will work with the data that is returned:</p>
+<code>
+	<pre>
+	-(void)networkRequestDidSucceed:(NSDictionary *)jsonData withInterface:(SirqulNetworkInterface *)sni{
+		if ([SNIHelper checkIfValid:jsonData]) {
+			if (sni.status == kSirqulStatusSignUp) {
+				SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+				[interface setStatus:kSirqulStatusLogin];
+				[interface loginWithUsername:usernameField.text andPassword:passwordField.text andLocation:nil andReturnProfile:nil andResponseFilters:nil];
+			}else if (sni.status == kSirqulStatusLogin) {
+				if ([SNIHelper checkDictionary:jsonData objectForKey:@"account"]) {
+					NSDictionary *account = [jsonData objectForKey:@"account"];
+					if ([SNIHelper checkDictionary:account objectForKey:@"accountId"]) {
+						[[NSUserDefaults standardUserDefaults]setObject:[account objectForKey:@"accountId"] forKey:@"accountId"];
+					}
+				}
+				[[NSUserDefaults standardUserDefaults]setBool:YES forKey:@"loggedIn"];
+				[[NSUserDefaults standardUserDefaults]synchronize];
+
+				// Success!
+				[activityView.activityIndicator stopAnimating];
+				[activityView removeFromSuperview];
+			
+				DDWallViewController *wallViewController = [[DDWallViewController alloc] initWithNibName:nil bundle:nil];
+				[(UINavigationController *)self.presentingViewController pushViewController:wallViewController animated:NO];
+				[self.presentingViewController dismissModalViewControllerAnimated:YES];
+			}
+		}else{
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"Error" message:[jsonData objectForKey:@"message"] delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+			doneButton.enabled = [self shouldEnableDoneButton];
+			[activityView.activityIndicator stopAnimating];
+			[activityView removeFromSuperview];
+			// Bring the keyboard back up, because they'll probably need to change something.
+			[usernameField becomeFirstResponder];
+		}
+	}
+
+	-(void)networkRequest:(SirqulNetworkInterface *)sni didFailWithError:(NSError *)error{
+		if (sni.status == kSirqulStatusSignUp) {
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:error.description message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+			doneButton.enabled = [self shouldEnableDoneButton];
+			[activityView.activityIndicator stopAnimating];
+			[activityView removeFromSuperview];
+			// Bring the keyboard back up, because they'll probably need to change something.
+			[usernameField becomeFirstResponder];
+		}
+	}
+	</pre>
+</code>
+<p>Note that after the user successfully signs up, the app then automatically logs then in with the account that was just created.</p>
+
+<p><h3>4. Using Sirqul to log out a logged in user:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	// Log out.
+	[PFUser logOut];
+
+	[self.presentingViewController dismissModalViewControllerAnimated:YES];
+
+	PAWAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+	[appDelegate presentWelcomeViewController];
+	</pre>
+</code>
+<p>To log out of the Sirqul platform, we will utilize the <i>logoutWithAccountId:andLocation:</i> method:</p>
+<code>
+	<pre>
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+	[interface setStatus:kSirqulStatusLogout];
+	[interface logoutWithAccountId:[[NSUserDefaults standardUserDefaults]objectForKey:@"accountId"] andLocation:nil];
+	</pre>
+</code>
+<p>The response will come back in the <i>SirqulNetworkInterfaceDelegate</i> callback methods, and we will work with the data that is returned:</p>
+<code>
+	<pre>
+	-(void)networkRequestDidSucceed:(NSDictionary *)jsonData withInterface:(SirqulNetworkInterface *)sni{
+		[[NSUserDefaults standardUserDefaults]setBool:NO forKey:@"loggedIn"];
+		[[NSUserDefaults standardUserDefaults]synchronize];
+		[self.presentingViewController dismissModalViewControllerAnimated:YES];
+	
+		DDAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+		[appDelegate presentWelcomeViewController];
+	}
+
+	-(void)networkRequest:(SirqulNetworkInterface *)sni didFailWithError:(NSError *)error{
+		[[NSUserDefaults standardUserDefaults]setBool:NO forKey:@"loggedIn"];
+		[[NSUserDefaults standardUserDefaults]synchronize];
+		[self.presentingViewController dismissModalViewControllerAnimated:YES];
+	
+		DDAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+		[appDelegate presentWelcomeViewController];
+	}
+	</pre>
+</code>
+
+<p><h3>5. Using Sirqul to retrieve a list of posts:</h3></p>
+<p>Parse original code in the <i>PAWWallPostsTableViewController</i> class:</p>
+<code>
+	<pre>
+	- (PFQuery *)queryForTable {
+		PFQuery *query = [PFQuery queryWithClassName:self.parseClassName];
+
+		// If no objects are loaded in memory, we look to the cache first to fill the table
+		// and then subsequently do a query against the network.
+		if ([self.objects count] == 0) {
+			query.cachePolicy = kPFCachePolicyCacheThenNetwork;
+		}
+
+		// Query for posts near our current location.
+
+		// Get our current location:
+		PAWAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+		CLLocation *currentLocation = appDelegate.currentLocation;
+		CLLocationAccuracy filterDistance = appDelegate.filterDistance;
+
+		// And set the query to look by location
+		PFGeoPoint *point = [PFGeoPoint geoPointWithLatitude:currentLocation.coordinate.latitude longitude:currentLocation.coordinate.longitude];
+		[query whereKey:kPAWParseLocationKey nearGeoPoint:point withinKilometers:filterDistance / kPAWMetersInAKilometer];
+		[query includeKey:kPAWParseUserKey];
+
+		return query;
+	}
+	</pre>
+</code>
+<p>There is also code in the <i>PAWWallViewController</i> class to support this:</p>
+<code>
+	<pre>
+	- (void)queryForAllPostsNearLocation:(CLLocation *)currentLocation withNearbyDistance:(CLLocationAccuracy)nearbyDistance {
+		PFQuery *query = [PFQuery queryWithClassName:self.className];
+
+		if (currentLocation == nil) {
+			NSLog(@"%s got a nil location!", __PRETTY_FUNCTION__);
+		}
+
+		// If no objects are loaded in memory, we look to the cache first to fill the table
+		// and then subsequently do a query against the network.
+		if ([self.allPosts count] == 0) {
+			query.cachePolicy = kPFCachePolicyCacheThenNetwork;
+		}
+
+		// Query for posts sort of kind of near our current location.
+		PFGeoPoint *point = [PFGeoPoint geoPointWithLatitude:currentLocation.coordinate.latitude longitude:currentLocation.coordinate.longitude];
+		[query whereKey:kPAWParseLocationKey nearGeoPoint:point withinKilometers:kPAWWallPostMaximumSearchDistance];
+		[query includeKey:kPAWParseUserKey];
+		query.limit = kPAWWallPostsSearch;
+
+		[query findObjectsInBackgroundWithBlock:^(NSArray *objects, NSError *error) {
+			if (error) {
+				NSLog(@"error in geo query!"); // todo why is this ever happening?
+			} else {
+				// We need to make new post objects from objects,
+				// and update allPosts and the map to reflect this new array.
+				// But we don't want to remove all annotations from the mapview blindly,
+				// so let's do some work to figure out what's new and what needs removing.
+
+				// 1. Find genuinely new posts:
+				NSMutableArray *newPosts = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+				// (Cache the objects we make for the search in step 2:)
+				NSMutableArray *allNewPosts = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+				for (PFObject *object in objects) {
+					PAWPost *newPost = [[PAWPost alloc] initWithPFObject:object];
+					[allNewPosts addObject:newPost];
+					BOOL found = NO;
+					for (PAWPost *currentPost in allPosts) {
+						if ([newPost equalToPost:currentPost]) {
+							found = YES;
+						}
+					}
+					if (!found) {
+						[newPosts addObject:newPost];
+					}
+				}
+				// newPosts now contains our new objects.
+
+				// 2. Find posts in allPosts that didn't make the cut.
+				NSMutableArray *postsToRemove = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+				for (PAWPost *currentPost in allPosts) {
+					BOOL found = NO;
+					// Use our object cache from the first loop to save some work.
+					for (PAWPost *allNewPost in allNewPosts) {
+						if ([currentPost equalToPost:allNewPost]) {
+							found = YES;
+						}
+					}
+					if (!found) {
+						[postsToRemove addObject:currentPost];
+					}
+				}
+				// postsToRemove has objects that didn't come in with our new results.
+
+				// 3. Configure our new posts; these are about to go onto the map.
+				for (PAWPost *newPost in newPosts) {
+					CLLocation *objectLocation = [[CLLocation alloc] initWithLatitude:newPost.coordinate.latitude longitude:newPost.coordinate.longitude];
+					// if this post is outside the filter distance, don't show the regular callout.
+					CLLocationDistance distanceFromCurrent = [currentLocation distanceFromLocation:objectLocation];
+					[newPost setTitleAndSubtitleOutsideDistance:( distanceFromCurrent > nearbyDistance ? YES : NO )];
+					// Animate all pins after the initial load:
+					newPost.animatesDrop = mapPinsPlaced;
+				}
+
+				// At this point, newAllPosts contains a new list of post objects.
+				// We should add everything in newPosts to the map, remove everything in postsToRemove,
+				// and add newPosts to allPosts.
+				[mapView removeAnnotations:postsToRemove];
+				[mapView addAnnotations:newPosts];
+				[allPosts addObjectsFromArray:newPosts];
+				[allPosts removeObjectsInArray:postsToRemove];
+
+				self.mapPinsPlaced = YES;
+			}
+		}];
+	}
+	</pre>
+</code>
+<p>To retrieve a list of posts on the Sirqul platform, we utilize the <i>searchAlbumsByDistanceWithAccountId:andOwnerId:andQuery:andFilters:andAlbumTypes:andStart:andLimit:andDateCreated:andLocation:andRange:</i> method.</p>
+<code>
+	<pre>
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+	[interface setStatus:kSirqulStatusSearchAlbumsByDistance];
+	[interface searchAlbumsByDistanceWithAccountId:accountId andOwnerId:nil andQuery:nil andFilters:[NSArray arrayWithObject:@"PUBLIC"] andAlbumTypes:nil andStart:[NSNumber numberWithInteger:0] andLimit:[NSNumber numberWithInteger:100] andDateCreated:0 andLocation:currentLocation andRange:[NSNumber numberWithInteger:50]];
+	</pre>
+</code>
+<p>The response will come back in the <i>SirqulNetworkInterfaceDelegate</i> callback methods, and we will work with the data that is returned:</p>
+<code>
+	<pre>
+	-(void)networkRequestDidSucceed:(NSDictionary *)jsonData withInterface:(SirqulNetworkInterface *)sni{
+		if ([SNIHelper checkIfValid:jsonData]) {
+			if (sni.status == kSirqulStatusSearchAlbumsByDistance) {
+				allWallposts = [[NSArray alloc]initWithArray:[jsonData objectForKey:@"listResponse"]];
+			
+				// We need to make new post objects from objects,
+				// and update allPosts and the map to reflect this new array.
+				// But we don't want to remove all annotations from the mapview blindly,
+				// so let's do some work to figure out what's new and what needs removing.
+			
+				// 1. Find genuinely new posts:
+				NSMutableArray *newPosts = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+				// (Cache the objects we make for the search in step 2:)
+				NSMutableArray *allNewPosts = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+			
+				if ([SNIHelper checkDictionary:jsonData objectForKey:@"listResponse"]) {
+					NSArray *listResponse = [jsonData objectForKey:@"listResponse"];
+					for (NSDictionary *object in listResponse) {
+						DDPost *newPost = [[DDPost alloc]initWithSirqulObject:object];
+						if ([SNIHelper checkDictionary:object objectForKey:@"albumId"]) {
+							newPost.objectId = [[object objectForKey:@"albumId"]integerValue];
+						}
+						[allNewPosts addObject:newPost];
+						BOOL found = NO;
+						for (DDPost *currentPost in allPosts) {
+							if ([newPost equalToPost:currentPost]) {
+								found = YES;
+							}
+						}
+						if (!found) {
+							[newPosts addObject:newPost];
+						}
+					}
+				}
+				// newPosts now contains our new objects.
+			
+				// 2. Find posts in allPosts that didn't make the cut.
+				NSMutableArray *postsToRemove = [[NSMutableArray alloc] initWithCapacity:kPAWWallPostsSearch];
+				for (DDPost *currentPost in allPosts) {
+					BOOL found = NO;
+					// Use our object cache from the first loop to save some work.
+					for (DDPost *allNewPost in allNewPosts) {
+						if ([currentPost equalToPost:allNewPost]) {
+							found = YES;
+						}
+					}
+					if (!found) {
+						[postsToRemove addObject:currentPost];
+					}
+				}
+				// postsToRemove has objects that didn't come in with our new results.
+			
+				// 3. Configure our new posts; these are about to go onto the map.
+				DDAppDelegate *appDelegate = [[UIApplication sharedApplication]delegate];
+				for (DDPost *newPost in newPosts) {
+					CLLocation *objectLocation = [[CLLocation alloc] initWithLatitude:newPost.coordinate.latitude longitude:newPost.coordinate.longitude];
+					// if this post is outside the filter distance, don't show the regular callout.
+					CLLocationDistance distanceFromCurrent = [appDelegate.currentLocation distanceFromLocation:objectLocation];
+					[newPost setTitleAndSubtitleOutsideDistance:( distanceFromCurrent > lastNearbyDistance ? YES : NO )];
+					// Animate all pins after the initial load:
+					newPost.animatesDrop = mapPinsPlaced;
+				}
+			
+				// At this point, newAllPosts contains a new list of post objects.
+				// We should add everything in newPosts to the map, remove everything in postsToRemove,
+				// and add newPosts to allPosts.
+				[mapView removeAnnotations:postsToRemove];
+				[mapView addAnnotations:newPosts];
+				[allPosts addObjectsFromArray:newPosts];
+				[allPosts removeObjectsInArray:postsToRemove];
+			
+				self.mapPinsPlaced = YES;
+			
+				[self updatePostsForLocation:appDelegate.currentLocation withNearbyDistance:lastNearbyDistance];
+			}
+		}
+	}
+	</pre>
+</code>
+
+<p><h3>6. Using Sirqul to create a post:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	PAWAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+	CLLocationCoordinate2D currentCoordinate = appDelegate.currentLocation.coordinate;
+	PFGeoPoint *currentPoint = [PFGeoPoint geoPointWithLatitude:currentCoordinate.latitude longitude:currentCoordinate.longitude];
+	PFUser *user = [PFUser currentUser];
+
+	// Stitch together a postObject and send this async to Parse
+	PFObject *postObject = [PFObject objectWithClassName:kPAWParsePostsClassKey];
+	[postObject setObject:textView.text forKey:kPAWParseTextKey];
+	[postObject setObject:user forKey:kPAWParseUserKey];
+	[postObject setObject:currentPoint forKey:kPAWParseLocationKey];
+	// Use PFACL to restrict future modifications to this object.
+	PFACL *readOnlyACL = [PFACL ACL];
+	[readOnlyACL setPublicReadAccess:YES];
+	[readOnlyACL setPublicWriteAccess:NO];
+	[postObject setACL:readOnlyACL];
+	[postObject saveInBackgroundWithBlock:^(BOOL succeeded, NSError *error) {
+		if (error) {
+			NSLog(@"Couldn't save!");
+			NSLog(@"%@", error);
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:[[error userInfo] objectForKey:@"error"] message:nil delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+			return;
+		}
+		if (succeeded) {
+			NSLog(@"Successfully saved!");
+			NSLog(@"%@", postObject);
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[[NSNotificationCenter defaultCenter] postNotificationName:kPAWPostCreatedNotification object:nil];
+			});
+		} else {
+			NSLog(@"Failed to save.");
+		}
+	}];
+	</pre>
+</code>
+<p>To create a new post with Sirqul, we will utilize the <i>addAlbumWithAccountId:andTitle:andMedia:andAttachedMedia:andAttachedMediaIsVideo:andAttachedMediaURL:andCoverAssetNullable:andStartDate:andEndDate:andTags:andDescription:andPublicRead:andPublicWrite:andPublicDelete:andPublicAdd:andLocation:andLocationDescription:andAlbumType:andVisibility:andIncludeCoverInAssetList:</i> method.</p>
+<code>
+	<pre>
+	// Data prep:
+	DDAppDelegate *appDelegate = [[UIApplication sharedApplication] delegate];
+	
+	//Sirqul Implementation - Create an instance of SirqulNetworkInterface and use the addAlbum method.
+	//Reponse will appear in the callback methods below.
+	NSNumber *accountId =[[NSUserDefaults standardUserDefaults]objectForKey:@"accountId"];
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andHost:@"https://test.sirqul.com:443/" andLocationManager:nil andAppVersion:nil andAppKey:sirqulAppKey andAPIVersion:nil andPrivateKey:sirqulPrivateKey andConnectionTimeout:60];
+	[interface setStatus:kSirqulStatusAddAlbum];
+	[interface addAlbumWithAccountId:accountId andTitle:textView.text andMedia:nil andAttachedMedia:nil andAttachedMediaIsVideo:nil andAttachedMediaURL:nil andCoverAssetNullable:nil andStartDate:0 andEndDate:0 andTags:nil andDescription:nil andPublicRead:[NSNumber numberWithBool:YES] andpublicWrite:[NSNumber numberWithBool:YES] andPublicDelete:[NSNumber numberWithBool:NO] andPublicAdd:[NSNumber numberWithBool:YES] andLocation:appDelegate.currentLocation andLocationDescription:nil andAlbumType:nil andVisibility:kVisibilityPUBLIC andIncludeCoverInAssetList:nil];
+	</pre>
+</code>
+<p>The response will come back in the <i>SirqulNetworkInterfaceDelegate</i> callback methods, and we will work with the data that is returned:</p>
+<code>
+	<pre>
+	-(void)networkRequestDidSucceed:(NSDictionary *)jsonData withInterface:(SirqulNetworkInterface *)sni{
+		if ([SNIHelper checkIfValid:jsonData]) {
+			if (sni.status == kSirqulStatusAddAlbum) {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					[[NSNotificationCenter defaultCenter] postNotificationName:kPAWPostCreatedNotification object:nil];
+				});
+				[self dismissModalViewControllerAnimated:YES];
+			}
+		}else{
+			NSLog(@"Couldn't save!");
+			NSLog(@"%@", [jsonData objectForKey:@"message"]);
+			UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"Error" message:[jsonData objectForKey:@"message"] delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+			[alertView show];
+		}
+	}
+
+	-(void)networkRequest:(SirqulNetworkInterface *)sni didFailWithError:(NSError *)error{
+		NSLog(@"Couldn't save!");
+		NSLog(@"%@", error.description);
+		UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"Error" message:error.description delegate:self cancelButtonTitle:nil otherButtonTitles:@"Ok", nil];
+		[alertView show];
+	}
+	</pre>
+</code>
+
+<p><h3>7. Using Sirqul to send an analytic:</h3></p>
+<p>Parse original code:</p>
+<code>
+	<pre>
+	[PFAnalytics trackAppOpenedWithLaunchOptions:launchOptions];
+	</pre>
+</code>
+<p>To send an analytic with Sirqul, we will utilize the <i>quickAnalyticWithAccountId:andTag:andCustomId:andLocation:</i> method.</p>
+<code>
+	<pre>
+	SirqulNetworkInterface *interface = [[SirqulNetworkInterface alloc]initWithDelegate:self andAppKey:sirqulAppKey andPrivateKey:sirqulPrivateKey];
+	[interface quickAnalyticWithAccountId:[[NSUserDefaults standardUserDefaults]objectForKey:@"accountId"] andTag:@"AppLaunched" andCustomId:nil andLocation:nil];
+	</pre>
+<code>
